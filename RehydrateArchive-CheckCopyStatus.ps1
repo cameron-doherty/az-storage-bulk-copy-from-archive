@@ -9,9 +9,20 @@
     such damages. 
 #>
 
-$rgName = "<resourceGroupName>"
-$destAccount = "<destinationStorageAccountName>"
-$destContainer = "<targetContainerName>" 
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory=$true)]
+    [string]
+    $rgName,
+
+    [Parameter(Mandatory=$true)]
+    [string]
+    $destAccount,
+
+    [Parameter(Mandatory=$true)]
+    [string]
+    $destContainer
+)
 
 $ctx = (Get-AzStorageAccount -ResourceGroupName $rgName -Name $destAccount).Context
 
@@ -40,5 +51,5 @@ do {
 }
 While ($Token -ne $Null)
 
-Write-Host "Number of Blobs Copied Successfully :: $successCount"
-Write-Host "Number of Blobs Still Being Copied  :: $waitingCount"
+Write-Host "Number of blobs copied + rehydrated successfully :: $successCount"
+Write-Host "Number of blobs still being processed            :: $waitingCount"

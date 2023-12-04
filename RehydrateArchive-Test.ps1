@@ -1,3 +1,4 @@
+
 <#
 .Synopsis
     Copy ARCHIVED Block Blob data in a designated source storage account to the target storage account
@@ -63,9 +64,9 @@ param (
     [int]$batchSize
 )
 
-$loginCheck = Get-AzContext
+# $loginCheck = Get-AzContext
 
-if (!$loginCheck) { Connect-AzAccount }
+# if (!$loginCheck) { Connect-AzAccount }
 
 # Get the destination account context
 $destCtx = (Get-AzStorageAccount -ResourceGroupName $rgName -Name $destAccount).Context
@@ -83,7 +84,7 @@ do {
     catch {
         Write-Host " ------------ ERROR ------------ " -ForegroundColor Red
         Write-Host $_
-        continue
+        break
     }
     
     
@@ -98,27 +99,36 @@ do {
         $Token = $Blobs[$Blobs.Count - 1].ContinuationToken;
     }
     
-    $Blobs | ForEach-Object {
-            if(($_.BlobType -eq "BlockBlob") -and ($_.AccessTier -eq "Archive") ) {
-                $sourceBlobName = $_.Name
-                $destinationBlobName = "$srcContainer/$sourceBlobName"
+    Write-Host "BATCH $blobCount --> $($blobCount+$batchSize) :: $(Get-Date -Format u) --PROCESSING-->" -NoNewLine
 
-                Write-Host "PROCESSING " -ForegroundColor Cyan -NoNewLine
-                Write-Host "$destinationBlobName :: " -NoNewLine
-                $targetBlob = Get-AzStorageBlob -Context $destCtx -Container $destContainer -Blob $destinationBlobName -ErrorAction SilentlyContinue
+    $time = Measure-Command {
+    $Blobs | ForEach-Object -ThrottleLimit 10 -Parallel  {
+            if(($_.BlobType -eq "BlockBlob")) {
+                $sourceBlobName = $_.Name
+                $destinationBlobName = "$using:srcContainer/$sourceBlobName"
+
+                # Write-Host "PROCESSING " -ForegroundColor Cyan -NoNewLine
+                # Write-Host "$destinationBlobName :: " -NoNewLine
+                $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $destinationBlobName -ErrorAction SilentlyContinue
 
                 if($targetBlob -eq $null) {
-                    Write-Host "REHYDRATING" -ForegroundColor Green
-                    Start-AzStorageBlobCopy -SrcContainer $srcContainer -SrcBlob $sourceBlobName -Context $srcCtx -DestContainer $destContainer -DestBlob $destinationBlobName -DestContext $destCtx -StandardBlobTier Hot -RehydratePriority Standard -Confirm:$false | Out-Null
+                    # Write-Host "REHYDRATING" -ForegroundColor Green
+                    # Start-AzStorageBlobCopy -SrcContainer $srcContainer -SrcBlob $sourceBlobName -Context $srcCtx -DestContainer $destContainer -DestBlob $destinationBlobName -DestContext $destCtx -StandardBlobTier Hot -RehydratePriority Standard -Confirm:$false | Out-Null
+                    Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $sourceBlobName -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $destinationBlobName -DestContext $using:destCtx -StandardBlobTier Hot -Confirm:$false | Out-Null
                 }
                 else
                 {
-                    Write-Host "SKIPPED" -ForegroundColor Yellow 
+                    # Write-Host "SKIPPED" -ForegroundColor Yellow 
                 }
                 
+                #$blobCount++
+                #if($blobCount -eq 10000) {break}
         }
     }
+    $blobCount += 2500
+    }
 
-    Write-Host "::: NEXT BATCH :::" -ForegroundColor Magenta
+    Write-Host " $(Get-Date -Format u) :: $($time.TotalMinutes)"
+    # Write-Host "::: NEXT BATCH :::" -ForegroundColor Magenta
 }
 While ($Token -ne $Null)
