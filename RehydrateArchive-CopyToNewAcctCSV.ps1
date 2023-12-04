@@ -84,28 +84,35 @@ $srcCtx = (Get-AzStorageAccount -ResourceGroupName $rgName -Name $srcAccount).Co
 
 $blobList = Import-Csv -Path $csvList
 $totalToBeProcessed = $blobList.Count
-$totalProcessed = 0 
+$totalProcessed = [hashtable]::Synchronized(@{})
+$totalProcessed.counter = 0
 
-$blobList | Where-Object {$_.AccessTier -eq "Archive" -and $_.BlobType -eq "BlockBlob"} | ForEach-Object { 
-    Write-Host "PROCESSING " -ForegroundColor Cyan -NoNewLine
-    Write-Host "$($_.Name) :: " -NoNewLine
 
-    $targetBlob = Get-AzStorageBlob -Context $destCtx -Container $destContainer -Blob $_.Name -ErrorAction SilentlyContinue
+$blobList | Where-Object {$_.AccessTier -eq "Hot" -and $_.BlobType -eq "BlockBlob"} | ForEach-Object -ThrottleLimit 10 -Parallel { 
+    #Write-Host "PROCESSING " -ForegroundColor Cyan -NoNewLine
+    #Write-Host "$($_.Name) :: " -NoNewLine
+
+    $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $_.Name -ErrorAction SilentlyContinue
 
     if($targetBlob -eq $null) {
-        Write-Host "REHYDRATING" -ForegroundColor Green
-        Start-AzStorageBlobCopy -SrcContainer $srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $srcCtx -DestContainer $destContainer -DestBlob $_.Name -DestContext $destCtx -StandardBlobTier Hot -RehydratePriority Standard -Confirm:$false | Out-Null
+        #Write-Host "REHYDRATING" -ForegroundColor Green
+        Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $_.Name -DestContext $using:destCtx -StandardBlobTier Hot -Confirm:$false | Out-Null
     }
     else
     {
-        Write-Host "SKIPPED" -ForegroundColor Yellow 
+        #Write-Host "SKIPPED" -ForegroundColor Yellow 
     }
 
-    $totalProcessed++
+    $totalProcessed = $using:totalProcessed
+    $totalProcessed.counter++
+    $checkPoint = $totalProcessed.counter % 500
+    if($checkPoint -eq 0) {
+        Write-Host "$(Get-Date -Format u) :: CHECKPOINT :: $($totalProcessed.counter) files processed :: Last File = $($_.Name)" -Backgroundcolor Yellow -ForegroundColor Black
+    }
 }
 
 Write-Host "`n`n------------ SUMMARY ------------ " -ForegroundColor Magenta
-Write-Host "$totalProcessed" -NoNewLine -ForegroundColor Green
+Write-Host "$($totalProcessed.counter) -NoNewLine -ForegroundColor Green
 Write-Host " out of " -NoNewLine
 Write-Host "$totalToBeProcessed" -NoNewLine -ForegroundColor Green
 Write-Host " blobs processed."
