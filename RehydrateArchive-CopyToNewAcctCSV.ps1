@@ -85,16 +85,17 @@ $totalProcessed.counter = 0
 
 Get-ChildItem -Path $csvDirectory -Filter *.csv | ForEach-Object {
     $csvList = $_.FullName
-    $blobList = Import-Csv -Path $csvList | Where-Object {$_.AccessTier -eq "Hot" -and $_.BlobType -eq "BlockBlob"}
+    $blobList = Import-Csv -Path $csvList | Where-Object {$_.AccessTier -eq "Archive" -and $_.BlobType -eq "BlockBlob"}
     $totalToBeProcessed = $blobList.Count
     
     Write-Host "$(Get-Date -Format u) :: Processing $($_.Name) containing $totalToBeProcessed files"
 
     $blobList | ForEach-Object -ThrottleLimit 10 -Parallel { 
-        $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $_.Name -ErrorAction SilentlyContinue
+        $blobName = $_.Name
+        $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $blobName -ErrorAction SilentlyContinue
 
         if($targetBlob -eq $null) {
-            Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $_.Name -DestContext $using:destCtx -StandardBlobTier Hot -Force -Confirm:$false | Out-Null
+            Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $blobName -DestContext $using:destCtx -StandardBlobTier Hot -Force -Confirm:$false | Out-Null
             #Write-Host "$(Get-Date -Format u) :: $($_.Name) :: REHYDRATED"
         }
         else {
