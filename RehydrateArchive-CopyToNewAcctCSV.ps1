@@ -16,8 +16,10 @@
         Name of the DESTINATION blob storage account
     destContainer
         Name of the DESTINATION blob storage container
-    csvList
-        CSV formatted list of blobs from the srcContainer.  Currently the expected CSV contains the following columns at minimum:
+    csvDirectory
+        This is the directory where the script will look for CSV files containing the list of blobs to process.  The script will iterate through each CSV file.  
+    
+        Each CSV file should be a formatted list of blobs from the srcContainer.  Currently the expected CSV contains the following columns at minimum:
             
             Name        :: Name of the blob including container name and any folder structure delimited by '/'. 
                         Ex: srcContainerName/RootFolder/SubFolder/File.txt
@@ -30,12 +32,7 @@
         command to just list out the blobs and then Export-CSV.  For containers with large number of 
         files it is recommended to use the Blob Inventory Service to generate the CSV for you automatically.
 .OUTPUTS
-    Script outputs the name of each source file from the csvList and reports back if it is processing a rehydration action or 
-    if it is skipped because the blob already exists in the target storage account.
-
-    PROCESSING source/Folder1/File1.txt :: REHYDRATING
-    PROCESSING source/Folder1/SubFolder1/File1.txt :: SKIPPED
-    PROCESSING source/RootFile.txt :: REHYDRATING
+    Script outputs a checkpoint every 500 files processed.  This is to help you track progress as the script runs.
 
 .NOTES
     DISCLAIMER: This code and information are provided "AS IS" without warranty of any kind, either
@@ -47,6 +44,7 @@
     information or other pecuniary loss even if it has been advised of the possibility of
     such damages. 
 #>
+
 
 [CmdletBinding()]
 param (
@@ -66,7 +64,7 @@ param (
     [string]$destContainer,
 
     [Parameter(Mandatory=$true)]
-    [string]$csvList
+    [string]$csvDirectory
 )
 
 $loginCheck = Get-AzContext
@@ -82,37 +80,38 @@ $destCtx = (Get-AzStorageAccount -ResourceGroupName $rgName -Name $destAccount).
 # Get the source account context
 $srcCtx = (Get-AzStorageAccount -ResourceGroupName $rgName -Name $srcAccount).Context
 
-$blobList = Import-Csv -Path $csvList
-$totalToBeProcessed = $blobList.Count
 $totalProcessed = [hashtable]::Synchronized(@{})
 $totalProcessed.counter = 0
 
+Get-ChildItem -Path $csvDirectory -Filter *.csv | ForEach-Object {
+    $csvList = $_.FullName
+    $blobList = Import-Csv -Path $csvList | Where-Object {$_.AccessTier -eq "Hot" -and $_.BlobType -eq "BlockBlob"}
+    $totalToBeProcessed = $blobList.Count
+    
+    Write-Host "$(Get-Date -Format u) :: Processing $($_.Name) containing $totalToBeProcessed files"
 
-$blobList | Where-Object {$_.AccessTier -eq "Hot" -and $_.BlobType -eq "BlockBlob"} | ForEach-Object -ThrottleLimit 10 -Parallel { 
-    #Write-Host "PROCESSING " -ForegroundColor Cyan -NoNewLine
-    #Write-Host "$($_.Name) :: " -NoNewLine
+    $blobList | ForEach-Object -ThrottleLimit 10 -Parallel { 
+        $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $_.Name -ErrorAction SilentlyContinue
 
-    $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $_.Name -ErrorAction SilentlyContinue
+        if($targetBlob -eq $null) {
+            Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $_.Name -DestContext $using:destCtx -StandardBlobTier Hot -Force -Confirm:$false | Out-Null
+            #Write-Host "$(Get-Date -Format u) :: $($_.Name) :: REHYDRATED"
+        }
+        else {
+            #Write-Host "$(Get-Date -Format u) :: $($_.Name) :: SKIPPED"
+        }
+        
+        $totalProcessed = $using:totalProcessed
+        $totalProcessed.counter++
 
-    if($targetBlob -eq $null) {
-        #Write-Host "REHYDRATING" -ForegroundColor Green
-        Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $_.Name -DestContext $using:destCtx -StandardBlobTier Hot -Confirm:$false | Out-Null
-    }
-    else
-    {
-        #Write-Host "SKIPPED" -ForegroundColor Yellow 
-    }
-
-    $totalProcessed = $using:totalProcessed
-    $totalProcessed.counter++
-    $checkPoint = $totalProcessed.counter % 500
-    if($checkPoint -eq 0) {
-        Write-Host "$(Get-Date -Format u) :: CHECKPOINT :: $($totalProcessed.counter) files processed :: Last File = $($_.Name)" -Backgroundcolor Yellow -ForegroundColor Black
+        if($totalProcessed.counter % 500 -eq 0) {
+            Write-Host "$(Get-Date -Format u) :: CHECKPOINT :: $($totalProcessed.counter) files processed from $using:csvList :: Last File = $($_.Name)" -Backgroundcolor Yellow -ForegroundColor Black
+        }
     }
 }
 
 Write-Host "`n`n------------ SUMMARY ------------ " -ForegroundColor Magenta
-Write-Host "$($totalProcessed.counter) -NoNewLine -ForegroundColor Green
+Write-Host "$($totalProcessed.counter)" -NoNewLine -ForegroundColor Green
 Write-Host " out of " -NoNewLine
 Write-Host "$totalToBeProcessed" -NoNewLine -ForegroundColor Green
 Write-Host " blobs processed."
