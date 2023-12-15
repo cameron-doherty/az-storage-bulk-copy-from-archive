@@ -89,7 +89,7 @@ Get-ChildItem -Path $csvDirectory -Filter *.csv | ForEach-Object {
 
     Write-Host "$(Get-Date -Format u) :: Processing $($_.Name)"
 
-    Get-Content $csvList.FullName | ForEach-Object -ThrottleLimit 5 -Parallel {
+    Get-Content $csvList.FullName | ForEach-Object -ThrottleLimit 10 -Parallel {
         $blob = $_ | ConvertFrom-Csv -Header "Name" #, "BlobType", "AccessTier", "AccessTierChangeTime", "RehydratePriority", "ArchiveStatus"
         
         $blobName = $blob.Name
