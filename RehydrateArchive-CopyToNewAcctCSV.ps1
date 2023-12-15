@@ -48,22 +48,22 @@
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, HelpMessage="Please provide the resource group name.")]
     [string]$rgName,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, HelpMessage="Please provide the source storage account name.")]
     [string]$srcAccount,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, HelpMessage="Please provide the destination storage account name.")]
     [string]$destAccount,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, HelpMessage="Please provide the source storage account container name.")]
     [string]$srcContainer,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, HelpMessage="Please provide the destination storage account container name.")]
     [string]$destContainer,
 
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, HelpMessage="Please provide the directory where the CSV files are contained.")]
     [string]$csvDirectory
 )
 
@@ -83,36 +83,36 @@ $srcCtx = (Get-AzStorageAccount -ResourceGroupName $rgName -Name $srcAccount).Co
 $totalProcessed = [hashtable]::Synchronized(@{})
 $totalProcessed.counter = 0
 
+
 Get-ChildItem -Path $csvDirectory -Filter *.csv | ForEach-Object {
-    $csvList = $_.FullName
-    $blobList = Import-Csv -Path $csvList | Where-Object {$_.AccessTier -eq "Archive" -and $_.BlobType -eq "BlockBlob"}
-    $totalToBeProcessed = $blobList.Count
-    
-    Write-Host "$(Get-Date -Format u) :: Processing $($_.Name) containing $totalToBeProcessed files"
+    $csvList = $_
 
-    $blobList | ForEach-Object -ThrottleLimit 10 -Parallel { 
-        $blobName = $_.Name
-        $targetBlob = Get-AzStorageBlob -Context $using:destCtx -Container $using:destContainer -Blob $blobName -ErrorAction SilentlyContinue
+    Write-Host "$(Get-Date -Format u) :: Processing $($_.Name)"
 
-        if($targetBlob -eq $null) {
-            Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $_.Name.split('/',2)[1] -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $blobName -DestContext $using:destCtx -StandardBlobTier Hot -Force -Confirm:$false | Out-Null
-            #Write-Host "$(Get-Date -Format u) :: $($_.Name) :: REHYDRATED"
-        }
-        else {
-            #Write-Host "$(Get-Date -Format u) :: $($_.Name) :: SKIPPED"
-        }
+    Get-Content $csvList.FullName | ForEach-Object -ThrottleLimit 5 -Parallel {
+        $blob = $_ | ConvertFrom-Csv -Header "Name" #, "BlobType", "AccessTier", "AccessTierChangeTime", "RehydratePriority", "ArchiveStatus"
         
-        $totalProcessed = $using:totalProcessed
-        $totalProcessed.counter++
-
-        if($totalProcessed.counter % 500 -eq 0) {
-            Write-Host "$(Get-Date -Format u) :: CHECKPOINT :: $($totalProcessed.counter) files processed from $using:csvList :: Last File = $($_.Name)" -Backgroundcolor Yellow -ForegroundColor Black
+        $blobName = $blob.Name
+        $srcBlobParsedName = $blob.Name.split('/',2)[1]
+        
+        if($srcBlobParsedName -ne $null -and $srcBlobParsedName -ne "") {
+            try {
+                Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $srcBlobParsedName -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $blobName -DestContext $using:destCtx -StandardBlobTier Hot -Force -Confirm:$false | Out-Null
+                
+                $totalProcessed = $using:totalProcessed
+                $totalProcessed.counter++
+                if($totalProcessed.counter % 500 -eq 0) {
+                    Write-Host "$(Get-Date -Format u) :: CHECKPOINT :: $($totalProcessed.counter) files processed from $($using:csvList.Name) :: Last File = $($blob.Name)" -ForegroundColor Yellow
+                }
+            }
+            catch {
+                Write-Host "Error copying blob: $srcBlobParsedName" -ForegroundColor Red
+                Write-Host $_.Exception.Message -ForegroundColor Red
+            }
         }
     }
 }
 
 Write-Host "`n`n------------ SUMMARY ------------ " -ForegroundColor Magenta
 Write-Host "$($totalProcessed.counter)" -NoNewLine -ForegroundColor Green
-Write-Host " out of " -NoNewLine
-Write-Host "$totalToBeProcessed" -NoNewLine -ForegroundColor Green
 Write-Host " blobs processed."
