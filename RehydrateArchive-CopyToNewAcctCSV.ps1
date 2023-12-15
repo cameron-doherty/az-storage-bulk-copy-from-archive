@@ -97,7 +97,7 @@ Get-ChildItem -Path $csvDirectory -Filter *.csv | ForEach-Object {
         
         if($srcBlobParsedName -ne $null -and $srcBlobParsedName -ne "") {
             try {
-                Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $srcBlobParsedName -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $blobName -DestContext $using:destCtx -StandardBlobTier Hot -Force -Confirm:$false | Out-Null
+                Start-AzStorageBlobCopy -SrcContainer $using:srcContainer -SrcBlob $srcBlobParsedName -Context $using:srcCtx -DestContainer $using:destContainer -DestBlob $blobName -DestContext $using:destCtx -StandardBlobTier Hot -RehydratePriority Standard -Confirm:$false | Out-Null
                 
                 $totalProcessed = $using:totalProcessed
                 $totalProcessed.counter++
